@@ -26,6 +26,8 @@ A powerful **Model Context Protocol (MCP)** server that provides intelligent pro
 
 ### MCP Configuration (works with any MCP client)
 
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=mcp-project-structure&config=eyJjb21tYW5kIjoibnB4IC15IG1jcC1wcm9qZWN0LXN0cnVjdHVyZSAtLXdvcmtzcGFjZSAuIiwiZW52Ijp7fX0%3D)
+
 Create or update `~/.cursor/mcp.json`:
 
 ```json
