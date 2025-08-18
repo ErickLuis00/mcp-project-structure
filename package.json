@@ -1,0 +1,57 @@
+{
+  "name": "mcp-project-structure",
+  "version": "1.0.0",
+  "description": "MCP server for better context of project structure and code analysis",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepublishOnly": "pnpm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "mcp",
+    "project",
+    "structure",
+    "model-context-protocol",
+    "typescript",
+    "ast",
+    "code-analysis"
+  ],
+  "author": "",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ErickLuis00/mcp-project-structure.git"
+  },
+  "homepage": "https://github.com/ErickLuis00/mcp-project-structure#readme",
+  "bugs": {
+    "url": "https://github.com/ErickLuis00/mcp-project-structure/issues"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.4.0",
+    "glob": "^11.0.1",
+    "zod": "^3.24.2"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "bin": {
+    "mcp-project-structure": "./dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.8.2"
+  }
+}
