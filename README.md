@@ -22,42 +22,9 @@ A powerful **Model Context Protocol (MCP)** server that provides intelligent pro
 - **TypeScript** 5.0.0 or higher (peer dependency)
 - **MCP-compatible client** (like Cursor, Claude Desktop, etc.)
 
-## 🛠️ Installation
 
 
-```bash
-pnpm install -g mcp-project-structure
-```
-
-### Option 2: Install from source
-
-```bash
-git clone https://github.com/yourusername/mcp-project-structure.git
-cd mcp-project-structure
-pnpm install
-pnpm run build
-```
-
-
-
-
-###  MCP Client Configuration
-
-Add this to your MCP client configuration (e.g., `~/.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "mcp-project-structure": {
-      "command": "npx",
-      "args": ["-y", "mcp-project-structure", "--workspace", "."],
-      "env": {}
-    }
-  }
-}
-```
-
-### For Cursor IDE Users
+### MCP Configuration (works with any MCP client)
 
 Create or update `~/.cursor/mcp.json`:
 
