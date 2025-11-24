@@ -67,16 +67,18 @@ async function getCodeFiles(dirPath: string, blacklist: string[] = []): Promise<
 
     // Normalize blacklist patterns to glob format
     const normalizedBlacklist = blacklist.map(pattern => {
-        // If pattern doesn't start with **/, add it for folder patterns
-        // If it's a file pattern, ensure it matches files at any depth
+        // If pattern already has glob syntax, use it as-is
         if (pattern.includes('*') || pattern.startsWith('**/')) {
             return pattern
         }
         // If it ends with / or doesn't have an extension, treat as folder
         if (pattern.endsWith('/') || !pattern.includes('.')) {
-            return `**/${pattern}**`
+            // Remove trailing slash if present
+            const cleanPattern = pattern.replace(/\/$/, '')
+            // Match all files within this directory at any depth
+            return `**/${cleanPattern}/**`
         }
-        // Otherwise, treat as file pattern
+        // Otherwise, treat as file pattern - match at any depth
         return `**/${pattern}`
     })
 
