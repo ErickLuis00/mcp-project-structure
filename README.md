@@ -13,6 +13,7 @@ A powerful **Model Context Protocol (MCP)** server that provides intelligent pro
 - **🔄 tRPC Procedure Detection**: Specialized support for tRPC router procedures
 - **📁 Project Structure Mapping**: Organizes code by file structure for better context
 - **🎯 Export-Aware Filtering**: Option to focus on exported functions only
+- **🚫 File/Folder Blacklisting**: Exclude specific files or folders from analysis via command line
 - **⚡ Fast Performance**: Efficient AST parsing and file scanning
 - **🔧 MCP Integration**: Seamlessly integrates with any MCP-compatible client
 
@@ -42,6 +43,36 @@ Create or update `~/.cursor/mcp.json`:
 }
 ```
 
+### Using Blacklist to Exclude Files/Folders
+
+You can exclude specific files or folders from analysis using the `--blacklist` parameter:
+
+```json
+{
+  "mcpServers": {
+    "mcp-project-structure": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-project-structure",
+        "--workspace",
+        ".",
+        "--blacklist",
+        "tests,dist,*.test.ts"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+The `--blacklist` parameter accepts comma-separated patterns:
+- **Folders**: `tests`, `dist/`, `src/components/ui`
+- **Files**: `file.ts`, `*.test.ts`
+- **Glob patterns**: `**/tests/**`, `**/*.spec.ts`
+
+Patterns are automatically normalized to glob format and merged with the default ignore list (which already excludes `node_modules`, `dist`, `.next`, etc.).
+
 ### For Development/Testing
 
 When developing or testing the MCP server locally, you can use this configuration:
@@ -54,7 +85,9 @@ When developing or testing the MCP server locally, you can use this configuratio
       "args": [
         "<FULL_PATH_TO_YOUR_PROJECT>/dist/index.js",
         "--workspace",
-        "."
+        ".",
+        "--blacklist",
+        "tests,*.test.ts"
       ],
       "env": {}
     }
@@ -160,12 +193,22 @@ src/
 
 ## 🔍 How It Works
 
-1. **File Discovery**: Scans the workspace for `.ts`, `.tsx`, `.js`, `.jsx` files
+1. **File Discovery**: Scans the workspace for `.ts`, `.tsx`, `.js`, `.jsx` files (excluding blacklisted patterns and default ignores)
 2. **AST Parsing**: Uses TypeScript compiler API to parse each file
 3. **Signature Extraction**: Extracts function signatures, parameters, and return types
 4. **tRPC Detection**: Identifies tRPC procedures and their router context
 5. **Structure Generation**: Organizes findings into a hierarchical markdown document
 6. **MCP Integration**: Exposes the analysis as an MCP tool for AI assistants
+
+### Command Line Arguments
+
+- `--workspace <path>`: **Required**. The workspace directory to scan (must be an absolute path)
+- `--blacklist <patterns>`: **Optional**. Comma-separated list of file/folder patterns to exclude from analysis
+
+**Example:**
+```bash
+npx -y mcp-project-structure --workspace /path/to/project --blacklist "tests,dist,*.test.ts"
+```
 
 ## 🧪 Testing
 

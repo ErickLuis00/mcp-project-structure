@@ -129,15 +129,28 @@ server.tool(
                 }
             }
         }
-        console.error(`Scanning directory: ${inputDir}`);
 
+        // Parse blacklist argument
+        const blacklist: string[] = []
+        const blacklistArgIndex = process.argv.findIndex(arg => arg === '--blacklist')
+        if (blacklistArgIndex !== -1 && process.argv[blacklistArgIndex + 1]) {
+            const blacklistValue = process.argv[blacklistArgIndex + 1]
+            // Support comma-separated values
+            const blacklistItems = blacklistValue.split(',').map(item => item.trim()).filter(item => item.length > 0)
+            blacklist.push(...blacklistItems)
+        }
+
+        console.error(`Scanning directory: ${inputDir}`);
+        if (blacklist.length > 0) {
+            console.error(`Blacklist patterns: ${blacklist.join(', ')}`);
+        }
 
         try {
             // Check if inputDir is an absolute path
 
 
             // Find all matching code files
-            const files = await getCodeFiles(inputDir);
+            const files = await getCodeFiles(inputDir, blacklist);
 
             if (files.length === 0) {
                 return {
@@ -176,6 +189,10 @@ server.tool(
             const functionCount = totalCount - procedureCount;
 
             // Create summary text
+            const blacklistInfo = blacklist.length > 0 
+                ? `- Scan Patterns Blacklisted: ${blacklist.join(', ')}` 
+                : '';
+            
             const summaryText = `
 Generated structure document:
 
@@ -183,6 +200,7 @@ Summary:
 - Scanned ${files.length} code files
 - Found ${functionCount} function signatures and ${procedureCount} tRPC procedures in ${filesWithFunctions} files
 ${exportedOnly ? `- Displaying only exported functions and all procedures` : ''}
+${blacklistInfo}
 
 Full document:
 ----------------
