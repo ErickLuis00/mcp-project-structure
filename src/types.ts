@@ -59,9 +59,9 @@ export class User {
     export type Status = 'active' | 'inactive'
   }
 
-  declare module 'asddasd' {
-    export interface SomeType {
-        id: number
-        name: string
-    }
-  }
+//   declare module 'asddasd' {
+//     export interface SomeType {
+//         id: number
+//         name: string
+//     }
+//   }
