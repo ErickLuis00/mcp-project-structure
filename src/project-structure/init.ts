@@ -2,7 +2,7 @@
 
 import * as path from 'path';
 import { getCodeFiles } from './file-scanner.js';
-import { parseFile, FunctionSignature } from './parser.js';
+import { parseFile, FunctionSignature, TypeSignature } from './parser.js';
 import { server } from "../index.js";
 import * as fs from 'fs';
 
@@ -24,12 +24,35 @@ function groupSignaturesByFile(signatures: FunctionSignature[]): Record<string, 
 }
 
 /**
- * Generate the markdown content from function signatures
+ * Group type signatures by file path
  */
-function generateMarkdown(signatures: FunctionSignature[], exportedOnly: boolean, inputDir: string): string {
-    const header = '# Function Signatures and tRPC Procedures';
-    if (signatures.length === 0) {
-        return `${header}\n\nNo functions or procedures found.`;
+function groupTypesByFile(types: TypeSignature[]): Record<string, TypeSignature[]> {
+    const grouped: Record<string, TypeSignature[]> = {};
+
+    for (const type of types) {
+        if (!grouped[type.filePath]) {
+            grouped[type.filePath] = [];
+        }
+
+        grouped[type.filePath].push(type);
+    }
+
+    return grouped;
+}
+
+/**
+ * Generate the markdown content from function signatures and type signatures
+ */
+function generateMarkdown(
+    signatures: FunctionSignature[], 
+    types: TypeSignature[], 
+    exportedOnly: boolean, 
+    inputDir: string
+): string {
+    const header = '# Function Signatures, tRPC Procedures, and Types';
+    
+    if (signatures.length === 0 && types.length === 0) {
+        return `${header}\n\nNo functions, procedures, or types found.`;
     }
 
     // Filter signatures if exportedOnly is true (less relevant for procedures)
@@ -37,24 +60,72 @@ function generateMarkdown(signatures: FunctionSignature[], exportedOnly: boolean
         ? signatures.filter(sig => sig.isExported || sig.isTrpcProcedure) // Keep procedures regardless of export
         : signatures;
 
-    if (filteredSignatures.length === 0) {
-        return `${header}\n\nNo exported functions or procedures found.`;
-    }
+    const filteredTypes = exportedOnly
+        ? types.filter(t => t.isExported)
+        : types;
 
     // Group by file
-    const groupedByFile = groupSignaturesByFile(filteredSignatures);
+    const groupedFunctionsByFile = groupSignaturesByFile(filteredSignatures);
+    const groupedTypesByFile = groupTypesByFile(filteredTypes);
+
+    // Collect all unique file paths
+    const allFilePaths = new Set([
+        ...Object.keys(groupedFunctionsByFile),
+        ...Object.keys(groupedTypesByFile)
+    ]);
 
     // Generate markdown with file structure
     let markdown = `${header}\n\n`;
 
     // Sort files by path
-    const sortedFiles = Object.keys(groupedByFile).sort();
+    const sortedFiles = Array.from(allFilePaths).sort();
 
     for (const filePath of sortedFiles) {
-        const fileSignatures = groupedByFile[filePath];
+        const fileSignatures = groupedFunctionsByFile[filePath] || [];
+        const fileTypes = groupedTypesByFile[filePath] || [];
         const relativePath = path.relative(inputDir, filePath);
 
         markdown += `## ${relativePath}\n\n`;
+
+        // Add types first (interfaces, type aliases, enums, classes, namespaces, modules)
+        if (fileTypes.length > 0) {
+            const interfaces = fileTypes.filter(t => t.kind === 'interface');
+            const typeAliases = fileTypes.filter(t => t.kind === 'type');
+            const enums = fileTypes.filter(t => t.kind === 'enum');
+            const classes = fileTypes.filter(t => t.kind === 'class');
+            const namespaces = fileTypes.filter(t => t.kind === 'namespace');
+            const modules = fileTypes.filter(t => t.kind === 'module');
+
+            if (classes.length > 0) {
+                markdown += '### Classes\n';
+                markdown += classes.map(t => `- ${t.fullSignature}`).join('\n') + '\n\n';
+            }
+
+            if (interfaces.length > 0) {
+                markdown += '### Interfaces\n';
+                markdown += interfaces.map(t => `- ${t.fullSignature}`).join('\n') + '\n\n';
+            }
+
+            if (typeAliases.length > 0) {
+                markdown += '### Types\n';
+                markdown += typeAliases.map(t => `- ${t.fullSignature}`).join('\n') + '\n\n';
+            }
+
+            if (enums.length > 0) {
+                markdown += '### Enums\n';
+                markdown += enums.map(t => `- ${t.fullSignature}`).join('\n') + '\n\n';
+            }
+
+            if (namespaces.length > 0) {
+                markdown += '### Namespaces\n';
+                markdown += namespaces.map(t => `- ${t.fullSignature}`).join('\n') + '\n\n';
+            }
+
+            if (modules.length > 0) {
+                markdown += '### Declare Modules\n';
+                markdown += modules.map(t => `- ${t.fullSignature}`).join('\n') + '\n\n';
+            }
+        }
 
         // Separate procedures and regular functions
         const trpcProcedures = fileSignatures.filter(sig => sig.isTrpcProcedure);
@@ -81,8 +152,8 @@ function generateMarkdown(signatures: FunctionSignature[], exportedOnly: boolean
 
         // Add regular functions to markdown
         if (regularFunctions.length > 0) {
-            if (Object.keys(groupedProcedures).length > 0) {
-                markdown += '### Other Functions\n'; // Add header if procedures were listed
+            if (Object.keys(groupedProcedures).length > 0 || fileTypes.length > 0) {
+                markdown += '### Functions\n';
             }
             markdown += regularFunctions.map(sig => sig.fullSignature).join('\n') + '\n\n';
         }
@@ -94,7 +165,7 @@ function generateMarkdown(signatures: FunctionSignature[], exportedOnly: boolean
 // Register the structure.md generator tool
 server.tool(
     "get-project-structure",
-    "Extracts function signatures from JavaScript/TypeScript for better understanding of the project. You should always use this tool before starting any coding session after user asks for something",
+    "Extracts function signatures and type definitions (interfaces, types, enums, classes, namespaces, declare modules) from JavaScript/TypeScript for better understanding of the project. You should always use this tool before starting any coding session after user asks for something",
     {
     },
     async () => {
@@ -165,13 +236,17 @@ server.tool(
 
             // Parse all files and collect signatures
             const allSignatures: FunctionSignature[] = [];
+            const allTypes: TypeSignature[] = [];
 
             for (const file of files) {
                 try {
-                    // Get signatures (only)
-                    const fileSignatures = parseFile(file);
-                    if (fileSignatures.length > 0) {
-                        allSignatures.push(...fileSignatures);
+                    // Get signatures and types
+                    const { functions, types } = parseFile(file);
+                    if (functions.length > 0) {
+                        allSignatures.push(...functions);
+                    }
+                    if (types.length > 0) {
+                        allTypes.push(...types);
                     }
                 } catch (error) {
                     // Log parsing errors to the main server console
@@ -180,17 +255,38 @@ server.tool(
             }
 
             // Generate markdown content
-            const markdownContent = generateMarkdown(allSignatures, exportedOnly, inputDir);
+            const markdownContent = generateMarkdown(allSignatures, allTypes, exportedOnly, inputDir);
 
             // Prepare summary information
-            const totalCount = allSignatures.length;
             const filesWithFunctions = Object.keys(groupSignaturesByFile(allSignatures)).length;
+            const filesWithTypes = Object.keys(groupTypesByFile(allTypes)).length;
             const procedureCount = allSignatures.filter(sig => sig.isTrpcProcedure).length;
-            const functionCount = totalCount - procedureCount;
+            const functionCount = allSignatures.length - procedureCount;
+            
+            // Type counts
+            const interfaceCount = allTypes.filter(t => t.kind === 'interface').length;
+            const typeAliasCount = allTypes.filter(t => t.kind === 'type').length;
+            const enumCount = allTypes.filter(t => t.kind === 'enum').length;
+            const classCount = allTypes.filter(t => t.kind === 'class').length;
+            const namespaceCount = allTypes.filter(t => t.kind === 'namespace').length;
+            const moduleCount = allTypes.filter(t => t.kind === 'module').length;
 
             // Create summary text
             const blacklistInfo = blacklist.length > 0 
                 ? `- Scan Patterns Blacklisted: ${blacklist.join(', ')}` 
+                : '';
+            
+            // Build type summary parts
+            const typeParts: string[] = [];
+            if (interfaceCount > 0) typeParts.push(`${interfaceCount} interfaces`);
+            if (typeAliasCount > 0) typeParts.push(`${typeAliasCount} types`);
+            if (enumCount > 0) typeParts.push(`${enumCount} enums`);
+            if (classCount > 0) typeParts.push(`${classCount} classes`);
+            if (namespaceCount > 0) typeParts.push(`${namespaceCount} namespaces`);
+            if (moduleCount > 0) typeParts.push(`${moduleCount} declare modules`);
+            
+            const typesSummary = allTypes.length > 0 
+                ? `- Found ${allTypes.length} type definitions (${typeParts.join(', ')}) in ${filesWithTypes} files`
                 : '';
             
             const summaryText = `
@@ -199,7 +295,8 @@ Generated structure document:
 Summary:
 - Scanned ${files.length} code files
 - Found ${functionCount} function signatures and ${procedureCount} tRPC procedures in ${filesWithFunctions} files
-${exportedOnly ? `- Displaying only exported functions and all procedures` : ''}
+${typesSummary}
+${exportedOnly ? `- Displaying only exported functions, procedures, and types` : ''}
 ${blacklistInfo}
 
 Full document:

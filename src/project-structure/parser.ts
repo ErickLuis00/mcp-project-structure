@@ -19,10 +19,423 @@ export interface FunctionSignature {
     inputSchemaText?: string
 }
 
+export interface TypeSignature {
+    name: string
+    kind: 'interface' | 'type' | 'enum' | 'class' | 'namespace' | 'module'
+    fullSignature: string
+    filePath: string
+    isExported: boolean
+}
+
+export interface ParseResult {
+    functions: FunctionSignature[]
+    types: TypeSignature[]
+}
+
+// Default depth for type extraction (1 = show direct properties only, 2 = one level of nesting)
+const DEFAULT_TYPE_DEPTH = 1
+
 /**
- * Parse a TypeScript/JavaScript file and extract function signatures and tRPC procedures
+ * Simplify a type node to a string representation with depth control
  */
-export function parseFile(filePath: string): FunctionSignature[] {
+function simplifyType(node: ts.TypeNode | undefined, sourceFile: ts.SourceFile, depth: number): string {
+    if (!node || depth < 0) return '...'
+    
+    // Primitive and simple types - always show
+    if (ts.isTypeReferenceNode(node)) {
+        const typeName = node.typeName.getText(sourceFile)
+        if (node.typeArguments && node.typeArguments.length > 0) {
+            if (depth === 0) return `${typeName}<...>`
+            const args = node.typeArguments.map(arg => simplifyType(arg, sourceFile, depth - 1)).join(', ')
+            return `${typeName}<${args}>`
+        }
+        return typeName
+    }
+    
+    if (ts.isArrayTypeNode(node)) {
+        return `${simplifyType(node.elementType, sourceFile, depth)}[]`
+    }
+    
+    if (ts.isUnionTypeNode(node)) {
+        if (depth === 0) return '...'
+        return node.types.map(t => simplifyType(t, sourceFile, depth)).join(' | ')
+    }
+    
+    if (ts.isIntersectionTypeNode(node)) {
+        if (depth === 0) return '...'
+        return node.types.map(t => simplifyType(t, sourceFile, depth)).join(' & ')
+    }
+    
+    if (ts.isTypeLiteralNode(node)) {
+        if (depth === 0) return '{ ... }'
+        const members = node.members.map(member => {
+            if (ts.isPropertySignature(member) && member.name) {
+                const propName = member.name.getText(sourceFile)
+                const propType = simplifyType(member.type, sourceFile, depth - 1)
+                const optional = member.questionToken ? '?' : ''
+                return `${propName}${optional}: ${propType}`
+            }
+            return '...'
+        }).join('; ')
+        return `{ ${members} }`
+    }
+    
+    if (ts.isFunctionTypeNode(node)) {
+        if (depth === 0) return '(...) => ...'
+        const params = node.parameters.map(p => {
+            const pName = p.name.getText(sourceFile)
+            const pType = simplifyType(p.type, sourceFile, depth - 1)
+            return `${pName}: ${pType}`
+        }).join(', ')
+        const returnType = simplifyType(node.type, sourceFile, depth - 1)
+        return `(${params}) => ${returnType}`
+    }
+    
+    if (ts.isTupleTypeNode(node)) {
+        if (depth === 0) return '[...]'
+        const elements = node.elements.map(e => simplifyType(e as ts.TypeNode, sourceFile, depth - 1)).join(', ')
+        return `[${elements}]`
+    }
+    
+    if (ts.isParenthesizedTypeNode(node)) {
+        return `(${simplifyType(node.type, sourceFile, depth)})`
+    }
+    
+    if (ts.isConditionalTypeNode(node)) {
+        if (depth === 0) return '... ? ... : ...'
+        return `${simplifyType(node.checkType, sourceFile, depth - 1)} extends ${simplifyType(node.extendsType, sourceFile, depth - 1)} ? ${simplifyType(node.trueType, sourceFile, depth - 1)} : ${simplifyType(node.falseType, sourceFile, depth - 1)}`
+    }
+    
+    if (ts.isMappedTypeNode(node)) {
+        if (depth === 0) return '{ [K in ...]: ... }'
+        return node.getText(sourceFile).replace(/\s+/g, ' ').substring(0, 80) + (node.getText(sourceFile).length > 80 ? '...' : '')
+    }
+    
+    if (ts.isIndexedAccessTypeNode(node)) {
+        return `${simplifyType(node.objectType, sourceFile, depth)}[${simplifyType(node.indexType, sourceFile, depth)}]`
+    }
+    
+    // Fallback - get raw text but limit length
+    const text = node.getText(sourceFile).replace(/\s+/g, ' ')
+    return text.length > 60 ? text.substring(0, 60) + '...' : text
+}
+
+/**
+ * Extract interface signature with depth control
+ */
+function extractInterfaceSignature(
+    node: ts.InterfaceDeclaration,
+    filePath: string,
+    sourceFile: ts.SourceFile,
+    depth: number = DEFAULT_TYPE_DEPTH
+): TypeSignature | null {
+    const name = node.name.text
+    const isExported = isNodeExported(node)
+    
+    // Build generic parameters if present
+    let generics = ''
+    if (node.typeParameters && node.typeParameters.length > 0) {
+        generics = '<' + node.typeParameters.map(tp => {
+            let param = tp.name.text
+            if (tp.constraint) param += ` extends ${simplifyType(tp.constraint, sourceFile, depth - 1)}`
+            if (tp.default) param += ` = ${simplifyType(tp.default, sourceFile, depth - 1)}`
+            return param
+        }).join(', ') + '>'
+    }
+    
+    // Build extends clause
+    let extendsClause = ''
+    if (node.heritageClauses) {
+        const extendsClauses = node.heritageClauses.filter(h => h.token === ts.SyntaxKind.ExtendsKeyword)
+        if (extendsClauses.length > 0) {
+            extendsClause = ' extends ' + extendsClauses[0].types.map(t => t.getText(sourceFile)).join(', ')
+        }
+    }
+    
+    // Extract members with depth control
+    const members = node.members.map(member => {
+        if (ts.isPropertySignature(member) && member.name) {
+            const propName = member.name.getText(sourceFile)
+            const optional = member.questionToken ? '?' : ''
+            const propType = simplifyType(member.type, sourceFile, depth)
+            return `${propName}${optional}: ${propType}`
+        }
+        if (ts.isMethodSignature(member) && member.name) {
+            const methodName = member.name.getText(sourceFile)
+            const params = member.parameters.map(p => {
+                const pName = p.name.getText(sourceFile)
+                const pType = simplifyType(p.type, sourceFile, depth - 1)
+                return `${pName}: ${pType}`
+            }).join(', ')
+            const returnType = simplifyType(member.type, sourceFile, depth - 1)
+            return `${methodName}(${params}): ${returnType}`
+        }
+        if (ts.isIndexSignatureDeclaration(member)) {
+            const indexParam = member.parameters[0]
+            const indexName = indexParam.name.getText(sourceFile)
+            const indexType = simplifyType(indexParam.type, sourceFile, depth - 1)
+            const valueType = simplifyType(member.type, sourceFile, depth - 1)
+            return `[${indexName}: ${indexType}]: ${valueType}`
+        }
+        return null
+    }).filter(Boolean).join('; ')
+    
+    const fullSignature = `interface ${name}${generics}${extendsClause} { ${members} }`
+    
+    return {
+        name,
+        kind: 'interface',
+        fullSignature,
+        filePath,
+        isExported
+    }
+}
+
+/**
+ * Extract type alias signature with depth control
+ */
+function extractTypeAliasSignature(
+    node: ts.TypeAliasDeclaration,
+    filePath: string,
+    sourceFile: ts.SourceFile,
+    depth: number = DEFAULT_TYPE_DEPTH
+): TypeSignature | null {
+    const name = node.name.text
+    const isExported = isNodeExported(node)
+    
+    // Build generic parameters
+    let generics = ''
+    if (node.typeParameters && node.typeParameters.length > 0) {
+        generics = '<' + node.typeParameters.map(tp => {
+            let param = tp.name.text
+            if (tp.constraint) param += ` extends ${simplifyType(tp.constraint, sourceFile, depth - 1)}`
+            if (tp.default) param += ` = ${simplifyType(tp.default, sourceFile, depth - 1)}`
+            return param
+        }).join(', ') + '>'
+    }
+    
+    const typeValue = simplifyType(node.type, sourceFile, depth)
+    const fullSignature = `type ${name}${generics} = ${typeValue}`
+    
+    return {
+        name,
+        kind: 'type',
+        fullSignature,
+        filePath,
+        isExported
+    }
+}
+
+/**
+ * Extract enum signature
+ */
+function extractEnumSignature(
+    node: ts.EnumDeclaration,
+    filePath: string,
+    sourceFile: ts.SourceFile
+): TypeSignature | null {
+    const name = node.name.text
+    const isExported = isNodeExported(node)
+    
+    const members = node.members.map(member => {
+        const memberName = member.name.getText(sourceFile)
+        if (member.initializer) {
+            const value = member.initializer.getText(sourceFile)
+            return `${memberName} = ${value}`
+        }
+        return memberName
+    }).join(', ')
+    
+    const fullSignature = `enum ${name} { ${members} }`
+    
+    return {
+        name,
+        kind: 'enum',
+        fullSignature,
+        filePath,
+        isExported
+    }
+}
+
+/**
+ * Extract class signature with properties and methods
+ */
+function extractClassSignature(
+    node: ts.ClassDeclaration,
+    filePath: string,
+    sourceFile: ts.SourceFile,
+    depth: number = DEFAULT_TYPE_DEPTH
+): TypeSignature | null {
+    const name = node.name?.text
+    if (!name) return null // Skip anonymous classes
+    
+    const isExported = isNodeExported(node)
+    
+    // Build generic parameters if present
+    let generics = ''
+    if (node.typeParameters && node.typeParameters.length > 0) {
+        generics = '<' + node.typeParameters.map(tp => {
+            let param = tp.name.text
+            if (tp.constraint) param += ` extends ${simplifyType(tp.constraint, sourceFile, depth - 1)}`
+            if (tp.default) param += ` = ${simplifyType(tp.default, sourceFile, depth - 1)}`
+            return param
+        }).join(', ') + '>'
+    }
+    
+    // Build extends/implements clauses
+    let extendsClause = ''
+    let implementsClause = ''
+    if (node.heritageClauses) {
+        for (const clause of node.heritageClauses) {
+            if (clause.token === ts.SyntaxKind.ExtendsKeyword) {
+                extendsClause = ' extends ' + clause.types.map(t => t.getText(sourceFile)).join(', ')
+            } else if (clause.token === ts.SyntaxKind.ImplementsKeyword) {
+                implementsClause = ' implements ' + clause.types.map(t => t.getText(sourceFile)).join(', ')
+            }
+        }
+    }
+    
+    // Extract class members (properties and method signatures only)
+    const members = node.members.map(member => {
+        // Property declarations
+        if (ts.isPropertyDeclaration(member) && member.name) {
+            const propName = member.name.getText(sourceFile)
+            const optional = member.questionToken ? '?' : ''
+            const propType = simplifyType(member.type, sourceFile, depth)
+            const staticMod = member.modifiers?.some(m => m.kind === ts.SyntaxKind.StaticKeyword) ? 'static ' : ''
+            return `${staticMod}${propName}${optional}: ${propType}`
+        }
+        // Method declarations (signature only, not body)
+        if (ts.isMethodDeclaration(member) && member.name) {
+            const methodName = member.name.getText(sourceFile)
+            const params = member.parameters.map(p => {
+                const pName = p.name.getText(sourceFile)
+                const pType = simplifyType(p.type, sourceFile, depth - 1)
+                return `${pName}: ${pType}`
+            }).join(', ')
+            const returnType = simplifyType(member.type, sourceFile, depth - 1)
+            const staticMod = member.modifiers?.some(m => m.kind === ts.SyntaxKind.StaticKeyword) ? 'static ' : ''
+            return `${staticMod}${methodName}(${params}): ${returnType}`
+        }
+        // Constructor
+        if (ts.isConstructorDeclaration(member)) {
+            const params = member.parameters.map(p => {
+                const pName = p.name.getText(sourceFile)
+                const pType = simplifyType(p.type, sourceFile, depth - 1)
+                return `${pName}: ${pType}`
+            }).join(', ')
+            return `constructor(${params})`
+        }
+        return null
+    }).filter(Boolean).join('; ')
+    
+    const fullSignature = `class ${name}${generics}${extendsClause}${implementsClause} { ${members} }`
+    
+    return {
+        name,
+        kind: 'class',
+        fullSignature,
+        filePath,
+        isExported
+    }
+}
+
+/**
+ * Extract namespace signature
+ */
+function extractNamespaceSignature(
+    node: ts.ModuleDeclaration,
+    filePath: string,
+    sourceFile: ts.SourceFile
+): TypeSignature | null {
+    const name = node.name.getText(sourceFile)
+    const isExported = isNodeExported(node)
+    
+    // Get a summary of what's inside the namespace
+    const contents: string[] = []
+    if (node.body && ts.isModuleBlock(node.body)) {
+        for (const statement of node.body.statements) {
+            if (ts.isInterfaceDeclaration(statement)) {
+                contents.push(`interface ${statement.name.text}`)
+            } else if (ts.isTypeAliasDeclaration(statement)) {
+                contents.push(`type ${statement.name.text}`)
+            } else if (ts.isEnumDeclaration(statement)) {
+                contents.push(`enum ${statement.name.text}`)
+            } else if (ts.isClassDeclaration(statement) && statement.name) {
+                contents.push(`class ${statement.name.text}`)
+            } else if (ts.isFunctionDeclaration(statement) && statement.name) {
+                contents.push(`function ${statement.name.text}`)
+            } else if (ts.isVariableStatement(statement)) {
+                const decl = statement.declarationList.declarations[0]
+                if (decl && ts.isIdentifier(decl.name)) {
+                    contents.push(`const ${decl.name.text}`)
+                }
+            }
+        }
+    }
+    
+    const contentsStr = contents.length > 0 ? contents.join('; ') : '...'
+    const fullSignature = `namespace ${name} { ${contentsStr} }`
+    
+    return {
+        name,
+        kind: 'namespace',
+        fullSignature,
+        filePath,
+        isExported
+    }
+}
+
+/**
+ * Extract declare module signature (ambient module declaration)
+ */
+function extractModuleSignature(
+    node: ts.ModuleDeclaration,
+    filePath: string,
+    sourceFile: ts.SourceFile
+): TypeSignature | null {
+    const name = node.name.getText(sourceFile)
+    const isExported = isNodeExported(node)
+    
+    // Get a summary of what's inside the module
+    const contents: string[] = []
+    if (node.body && ts.isModuleBlock(node.body)) {
+        for (const statement of node.body.statements) {
+            if (ts.isInterfaceDeclaration(statement)) {
+                contents.push(`interface ${statement.name.text}`)
+            } else if (ts.isTypeAliasDeclaration(statement)) {
+                contents.push(`type ${statement.name.text}`)
+            } else if (ts.isEnumDeclaration(statement)) {
+                contents.push(`enum ${statement.name.text}`)
+            } else if (ts.isClassDeclaration(statement) && statement.name) {
+                contents.push(`class ${statement.name.text}`)
+            } else if (ts.isFunctionDeclaration(statement) && statement.name) {
+                contents.push(`function ${statement.name.text}`)
+            } else if (ts.isVariableStatement(statement)) {
+                const decl = statement.declarationList.declarations[0]
+                if (decl && ts.isIdentifier(decl.name)) {
+                    contents.push(`const ${decl.name.text}`)
+                }
+            }
+        }
+    }
+    
+    const contentsStr = contents.length > 0 ? contents.join('; ') : '...'
+    const fullSignature = `declare module ${name} { ${contentsStr} }`
+    
+    return {
+        name,
+        kind: 'module',
+        fullSignature,
+        filePath,
+        isExported
+    }
+}
+
+/**
+ * Parse a TypeScript/JavaScript file and extract function signatures, tRPC procedures, and type definitions
+ */
+export function parseFile(filePath: string, typeDepth: number = DEFAULT_TYPE_DEPTH): ParseResult {
     const fileContent = fs.readFileSync(filePath, 'utf8')
     const sourceFile = ts.createSourceFile(
         filePath,
@@ -31,6 +444,7 @@ export function parseFile(filePath: string): FunctionSignature[] {
         true
     )
     const signatures: FunctionSignature[] = []
+    const types: TypeSignature[] = []
     let currentRouterName: string | undefined = undefined;
 
     function visit(node: ts.Node) {
@@ -59,6 +473,43 @@ export function parseFile(filePath: string): FunctionSignature[] {
             }
         }
 
+        // Type Definition Extraction - Interfaces
+        if (ts.isInterfaceDeclaration(node)) {
+            const typeSignature = extractInterfaceSignature(node, filePath, sourceFile, typeDepth)
+            if (typeSignature) types.push(typeSignature)
+        }
+
+        // Type Definition Extraction - Type Aliases
+        if (ts.isTypeAliasDeclaration(node)) {
+            const typeSignature = extractTypeAliasSignature(node, filePath, sourceFile, typeDepth)
+            if (typeSignature) types.push(typeSignature)
+        }
+
+        // Type Definition Extraction - Enums
+        if (ts.isEnumDeclaration(node)) {
+            const typeSignature = extractEnumSignature(node, filePath, sourceFile)
+            if (typeSignature) types.push(typeSignature)
+        }
+
+        // Type Definition Extraction - Classes
+        if (ts.isClassDeclaration(node)) {
+            const typeSignature = extractClassSignature(node, filePath, sourceFile, typeDepth)
+            if (typeSignature) types.push(typeSignature)
+        }
+
+        // Type Definition Extraction - Namespaces and Declare Modules
+        if (ts.isModuleDeclaration(node)) {
+            // Check if it's a namespace (identifier name) or declare module (string literal name)
+            if (ts.isIdentifier(node.name)) {
+                // Namespace declaration: namespace MyNamespace { ... }
+                const typeSignature = extractNamespaceSignature(node, filePath, sourceFile)
+                if (typeSignature) types.push(typeSignature)
+            } else if (ts.isStringLiteral(node.name)) {
+                // Ambient module declaration: declare module 'module-name' { ... }
+                const typeSignature = extractModuleSignature(node, filePath, sourceFile)
+                if (typeSignature) types.push(typeSignature)
+            }
+        }
 
         // Standard Function/Method Detection
         if (
@@ -98,7 +549,7 @@ export function parseFile(filePath: string): FunctionSignature[] {
     }
 
     visit(sourceFile)
-    return signatures; // Return only signatures
+    return { functions: signatures, types }
 }
 
 
