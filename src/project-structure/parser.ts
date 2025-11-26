@@ -167,7 +167,8 @@ function extractInterfaceSignature(
                 const pType = simplifyType(p.type, sourceFile, depth - 1)
                 return `${pName}: ${pType}`
             }).join(', ')
-            const returnType = simplifyType(member.type, sourceFile, depth - 1)
+            // Use explicit return type if present, otherwise default to 'void'
+            const returnType = member.type ? simplifyType(member.type, sourceFile, depth - 1) : 'void'
             return `${methodName}(${params}): ${returnType}`
         }
         if (ts.isIndexSignatureDeclaration(member)) {
@@ -313,7 +314,15 @@ function extractClassSignature(
                 const pType = simplifyType(p.type, sourceFile, depth - 1)
                 return `${pName}: ${pType}`
             }).join(', ')
-            const returnType = simplifyType(member.type, sourceFile, depth - 1)
+            // Check if method has explicit return type, otherwise infer based on async modifier
+            let returnType: string
+            if (member.type) {
+                returnType = simplifyType(member.type, sourceFile, depth - 1)
+            } else {
+                // No explicit return type - infer based on whether method is async
+                const isAsync = member.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)
+                returnType = isAsync ? 'Promise<unknown>' : 'void'
+            }
             const staticMod = member.modifiers?.some(m => m.kind === ts.SyntaxKind.StaticKeyword) ? 'static ' : ''
             return `${staticMod}${methodName}(${params}): ${returnType}`
         }

@@ -61,6 +61,7 @@ interface ContactConversationsResponse {
 }
 
 export class Chatwoot {
+    // Methods WITH explicit return types
     static searchContact(phone: string): Promise<SearchContactResponse> {
         return Promise.resolve({ meta: { count: 0, current_page: 1 }, payload: [] })
     }
@@ -69,28 +70,41 @@ export class Chatwoot {
         return Promise.resolve({ payload: [] })
     }
 
+    // Sync method with explicit return type
     static createContact(phone: string, name: string, email: string): void {
         // Implementation
     }
 
-    static createConversation(contactId: number, phone: string): void {
-        // Implementation
+    // Methods WITHOUT explicit return types (testing async inference)
+    static async postPrivateResponseToChatwootAsAdmin(conversationId: number, content: string) {
+        const response = await fetch(`/api/conversations/${conversationId}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ content })
+        })
+        return await response.json()
     }
 
-    static findOrCreateContact(phone: string, name: string, email: string): void {
-        // Implementation
+    static async getLabelsFromConversationAsAdmin(accountId: number, conversationId: number) {
+        const response = await fetch(`/api/accounts/${accountId}/conversations/${conversationId}/labels`)
+        return await response.json()
     }
 
-    static postPrivateResponse(conversationId: number, content: string): void {
-        // Implementation
+    static async setLabelsToConversationAsAdmin(accountId: number, conversationId: number, labels: string[]) {
+        const response = await fetch(`/api/accounts/${accountId}/conversations/${conversationId}/labels`, {
+            method: 'POST',
+            body: JSON.stringify({ labels })
+        })
+        return await response.json()
     }
 
-    static getLabels(accountId: number, conversationId: number): void {
-        // Implementation
+    // Sync method WITHOUT explicit return type (should show void)
+    static logMessage(message: string) {
+        console.log(message)
     }
 
-    static setLabels(accountId: number, conversationId: number, labels: string[]): void {
-        // Implementation
+    // Another sync method without return type
+    static clearCache() {
+        // Implementation - no return
     }
 }
 
