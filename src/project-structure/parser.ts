@@ -32,8 +32,8 @@ export interface ParseResult {
     types: TypeSignature[]
 }
 
-// Default depth for type extraction (1 = show direct properties only, 2 = one level of nesting)
-const DEFAULT_TYPE_DEPTH = 1
+// Default depth for type extraction (2 = show direct properties and one level of nesting for return types)
+const DEFAULT_TYPE_DEPTH = 2
 
 /**
  * Simplify a type node to a string representation with depth control
@@ -518,8 +518,12 @@ export function parseFile(filePath: string, typeDepth: number = DEFAULT_TYPE_DEP
             ts.isArrowFunction(node) ||
             ts.isMethodDeclaration(node)
         ) {
+            // Avoid double-counting class methods (already included in class signature)
+            if (ts.isMethodDeclaration(node) && isInsideClassDeclaration(node)) {
+                // Skip - method is already part of the class definition in Types section
+            }
             // Avoid double-counting procedures parsed within the router
-            if (!isInsideTrpcProcedureChain(node)) {
+            else if (!isInsideTrpcProcedureChain(node)) {
                 const signature = extractFunctionSignature(node, filePath, sourceFile, currentRouterName)
                 if (signature) {
                     signatures.push(signature)
@@ -552,6 +556,16 @@ export function parseFile(filePath: string, typeDepth: number = DEFAULT_TYPE_DEP
     return { functions: signatures, types }
 }
 
+
+// Helper to check if a method is inside a class declaration
+function isInsideClassDeclaration(node: ts.Node): boolean {
+    let parent = node.parent
+    while (parent) {
+        if (ts.isClassDeclaration(parent)) return true
+        parent = parent.parent
+    }
+    return false
+}
 
 // Helper to check if a function/arrow func is part of the tRPC chain directly
 function isInsideTrpcProcedureChain(node: ts.Node): boolean {

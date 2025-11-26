@@ -49,3 +49,62 @@ class ElementManager {
         return this.elements.find(el => el.id === id)
     }
 }
+
+// Simulating Chatwoot-like class with static methods
+interface SearchContactResponse {
+    meta: { count: number; current_page: number }
+    payload: Array<{ id: number; name: string; phone: string }>
+}
+
+interface ContactConversationsResponse {
+    payload: Array<{ id: number; status: string }>
+}
+
+export class Chatwoot {
+    static searchContact(phone: string): Promise<SearchContactResponse> {
+        return Promise.resolve({ meta: { count: 0, current_page: 1 }, payload: [] })
+    }
+
+    static getContactConversations(contactId: number): Promise<ContactConversationsResponse> {
+        return Promise.resolve({ payload: [] })
+    }
+
+    static createContact(phone: string, name: string, email: string): void {
+        // Implementation
+    }
+
+    static createConversation(contactId: number, phone: string): void {
+        // Implementation
+    }
+
+    static findOrCreateContact(phone: string, name: string, email: string): void {
+        // Implementation
+    }
+
+    static postPrivateResponse(conversationId: number, content: string): void {
+        // Implementation
+    }
+
+    static getLabels(accountId: number, conversationId: number): void {
+        // Implementation
+    }
+
+    static setLabels(accountId: number, conversationId: number, labels: string[]): void {
+        // Implementation
+    }
+}
+
+export class Whatsapp {
+    static sendPaymentTemplate(phone: string, paymentLink: string, pixCode: string): void {
+        // Implementation
+    }
+
+    static sendStatusUpdate(phone: string, referenceId: string, status: 'processing' | 'completed'): void {
+        // Implementation
+    }
+}
+
+// Regular function outside class
+export function convertPhoneNumber(phoneNumber: string): string {
+    return phoneNumber.replace(/\D/g, '')
+}
